@@ -122,7 +122,10 @@ func (c *Client) Connect(ctx context.Context) error {
 				}
 				c.mu.RLock()
 				if ch, ok := c.awaiting[m.ID]; ok {
-					ch <- m
+					c.machine.Go(ctx, func(ctx context.Context) error {
+						ch <- m
+						return nil
+					})
 				}
 				c.mu.RUnlock()
 			}
