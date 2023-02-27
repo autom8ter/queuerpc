@@ -3,7 +3,7 @@ package main
 import (
 	"flag"
 
-	"github.com/autom8ter/protoc-gen-rabbitmq/plugin"
+	"github.com/autom8ter/queuerpc/plugin"
 	"google.golang.org/protobuf/compiler/protogen"
 )
 

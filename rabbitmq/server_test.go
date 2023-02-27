@@ -1,21 +1,22 @@
-package rpc_test
+package rabbitmq_test
 
 import (
 	"context"
 	"testing"
 	"time"
 
-	"github.com/autom8ter/protoc-gen-rabbitmq/rpc"
+	"github.com/autom8ter/queuerpc"
+	"github.com/autom8ter/queuerpc/rabbitmq"
 )
 
 func TestServer(t *testing.T) {
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	srv, err := rpc.NewServer("amqp://guest:guest@localhost:5672/", "echo")
+	srv, err := rabbitmq.NewServer("amqp://guest:guest@localhost:5672/", "echo")
 	if err != nil {
 		panic(err)
 	}
-	err = srv.Serve(ctx, func(ctx context.Context, msg rpc.Message) rpc.Message {
+	err = srv.Serve(ctx, func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
 		return msg
 	})
 	if err != nil && err != context.Canceled && err != context.DeadlineExceeded {

@@ -1,22 +1,17 @@
-package rpc
+package rabbitmq
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"fmt"
 	"log"
 	"time"
 
 	"github.com/autom8ter/machine/v4"
+	"github.com/autom8ter/queuerpc"
+	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/rabbitmq/amqp091-go"
 )
-
-// HandlerFunc is a function that handles a message.
-// The message returned will be sent back to the client
-// If an error is encountered, an error should be added to the Message
-type HandlerFunc func(ctx context.Context, msg Message) Message
 
 // Server is a server that handles rpc requests
 type Server struct {
@@ -25,8 +20,8 @@ type Server struct {
 	inbox        string
 	machine      machine.Machine
 	errorHandler func(msg string, err error)
-	onRequest    func(ctx context.Context, msg Message) (Message, error)
-	onResponse   func(ctx context.Context, msg Message) (Message, error)
+	onRequest    func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
+	onResponse   func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
 }
 
 // NewServer creates a new server
@@ -91,7 +86,7 @@ func NewServer(url string, service string, opts ...ServerOption) (*Server, error
 }
 
 // Serve starts the server. This is a blocking call. It will return an error when the context is canceled.
-func (s *Server) Serve(ctx context.Context, handler HandlerFunc) error {
+func (s *Server) Serve(ctx context.Context, handler queuerpc.HandlerFunc) error {
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
 	sess, err := s.session(ctx)
@@ -121,17 +116,16 @@ func (s *Server) Serve(ctx context.Context, handler HandlerFunc) error {
 					s.errorHandler("", ErrChannelClosed)
 					return nil
 				}
-			case d := <-deliveries:
-				if d.Body == nil {
+			case delivery := <-deliveries:
+				if delivery.Body == nil {
 					// TODO: reconnect
 					s.errorHandler("", ErrEmptyMessageReceived)
 					return nil
 				}
 				s.machine.Go(ctx, func(ctx context.Context) error {
-					var msg Message
-					buf := bytes.NewBuffer(d.Body)
-					if err := gob.NewDecoder(buf).Decode(&msg); err != nil {
-						s.errorHandler(err.Error(), ErrDecodeMessage)
+					var msg = &queuerpc.Message{}
+					if err := proto.Unmarshal(delivery.Body, msg); err != nil {
+						s.errorHandler(err.Error(), queuerpc.ErrUnmarshal)
 						return nil
 					}
 					if s.onRequest != nil {
@@ -149,15 +143,15 @@ func (s *Server) Serve(ctx context.Context, handler HandlerFunc) error {
 							return nil
 						}
 					}
-					buf = bytes.NewBuffer(nil)
-					if err := gob.NewEncoder(buf).Encode(resp); err != nil {
-						s.errorHandler(err.Error(), ErrEncodeMessage)
+					bits, err := proto.Marshal(resp)
+					if err != nil {
+						s.errorHandler(err.Error(), queuerpc.ErrMarshal)
 						return nil
 					}
-					if err := sess.channel.PublishWithContext(ctx, "", s.outbox, false, false, amqp091.Publishing{
+					if err := sess.channel.PublishWithContext(ctx, "", delivery.ReplyTo, false, false, amqp091.Publishing{
 						MessageId:     uuid.NewString(),
-						CorrelationId: resp.ID,
-						Body:          buf.Bytes(),
+						CorrelationId: delivery.CorrelationId,
+						Body:          bits,
 					}); err != nil {
 						// TODO: reconnect
 						s.errorHandler(err.Error(), ErrPublishMessage)

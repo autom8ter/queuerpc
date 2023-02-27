@@ -1,32 +1,34 @@
-package rpc
+package rabbitmq
 
 import (
-	"bytes"
 	"context"
-	"encoding/gob"
 	"fmt"
 	"log"
 	"sync"
 	"time"
 
 	"github.com/autom8ter/machine/v4"
+	"github.com/autom8ter/queuerpc"
+	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
 	"github.com/rabbitmq/amqp091-go"
 )
+
+var _ queuerpc.IClient = &Client{}
 
 // Client is a client for making rpc requests through rabbitmq
 type Client struct {
 	session      func(ctx context.Context) (*session, error)
 	mu           sync.RWMutex
-	awaiting     map[string]chan Message
+	awaiting     map[string]chan *queuerpc.Message
 	outbox       string
 	inbox        string
 	machine      machine.Machine
 	ctx          context.Context
 	cancel       func()
 	errorHandler func(msg string, err error)
-	onRequest    func(ctx context.Context, msg Message) (Message, error)
-	onResponse   func(ctx context.Context, msg Message) (Message, error)
+	onRequest    func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
+	onResponse   func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
 }
 
 // NewClient creates a new client for making rpc requests.
@@ -65,6 +67,16 @@ func NewClient(url string, service string, opts ...ClientOption) (*Client, error
 	if err != nil {
 		return nil, fmt.Errorf("failed to create channel: %s", url)
 	}
+	if _, err := ch.QueueDeclare(
+		inbox,
+		false, // durable
+		false, // delete when unused
+		false, // exclusive
+		false, // no-wait
+		nil,   // arguments
+	); err != nil {
+		return nil, fmt.Errorf("failed to declare queue: %s", err.Error())
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Client{
 		session: func(ctx context.Context) (*session, error) {
@@ -74,7 +86,7 @@ func NewClient(url string, service string, opts ...ClientOption) (*Client, error
 			}, nil
 		},
 		mu:           sync.RWMutex{},
-		awaiting:     map[string]chan Message{},
+		awaiting:     map[string]chan *queuerpc.Message{},
 		inbox:        inbox,
 		outbox:       outbox,
 		machine:      machine.New(),
@@ -122,22 +134,21 @@ func (c *Client) Connect(ctx context.Context) error {
 					c.errorHandler("", ErrChannelClosed)
 					return nil
 				}
-			case msg := <-deliveries:
-				if msg.Body == nil {
+			case delivery := <-deliveries:
+				if delivery.Body == nil {
 					// TODO: reconnect
 					c.errorHandler("", ErrEmptyMessageReceived)
 					return nil
 				}
-				buf := bytes.NewBuffer(msg.Body)
-				var m Message
-				if err := gob.NewDecoder(buf).Decode(&m); err != nil {
-					c.errorHandler(err.Error(), ErrDecodeMessage)
+				var m queuerpc.Message
+				if err := proto.Unmarshal(delivery.Body, &m); err != nil {
+					c.errorHandler(err.Error(), queuerpc.ErrUnmarshal)
 					return nil
 				}
 				c.mu.RLock()
-				if ch, ok := c.awaiting[m.ID]; ok {
+				if ch, ok := c.awaiting[m.GetId()]; ok {
 					c.machine.Go(ctx, func(ctx context.Context) error {
-						ch <- m
+						ch <- &m
 						return nil
 					})
 				}
@@ -149,9 +160,9 @@ func (c *Client) Connect(ctx context.Context) error {
 }
 
 // Request sends a request to the server and returns the response and an error if one was encountered
-func (c *Client) Request(ctx context.Context, body Message, opts ...RequestOption) (*Message, error) {
-	requestOpt := &requestOpts{
-		timeout: 60 * time.Second,
+func (c *Client) Request(ctx context.Context, body *queuerpc.Message, opts ...queuerpc.RequestOption) (*queuerpc.Message, error) {
+	requestOpt := &queuerpc.RequestOpts{
+		Timeout: 60 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(requestOpt)
@@ -163,31 +174,31 @@ func (c *Client) Request(ctx context.Context, body Message, opts ...RequestOptio
 			return nil, err
 		}
 	}
-	ctx, cancel := context.WithTimeout(ctx, requestOpt.timeout)
+	ctx, cancel := context.WithTimeout(ctx, requestOpt.Timeout)
 	defer cancel()
 	sess, err := c.session(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	ch := make(chan Message, 1)
+	ch := make(chan *queuerpc.Message, 1)
 	c.mu.Lock()
 	if c.awaiting == nil {
-		c.awaiting = make(map[string]chan Message)
+		c.awaiting = make(map[string]chan *queuerpc.Message)
 	}
 	id := uuid.NewString()
-	body.ID = id
+	body.Id = id
 	c.awaiting[id] = ch
 	c.mu.Unlock()
-	buf := bytes.NewBuffer(nil)
-	if err := gob.NewEncoder(buf).Encode(body); err != nil {
+	bits, err := proto.Marshal(body)
+	if err != nil {
 		return nil, err
 	}
 	pubMsg := amqp091.Publishing{
-		CorrelationId: body.ID,
-		Body:          buf.Bytes(),
+		CorrelationId: body.Id,
+		Body:          bits,
 		ReplyTo:       c.inbox,
-		Expiration:    fmt.Sprintf("%d", requestOpt.timeout.Milliseconds()),
+		Expiration:    fmt.Sprintf("%d", requestOpt.Timeout.Milliseconds()),
 	}
 	if err := sess.channel.PublishWithContext(ctx, "", c.outbox, false, false, pubMsg); err != nil {
 		return nil, err
@@ -203,10 +214,10 @@ func (c *Client) Request(ctx context.Context, body Message, opts ...RequestOptio
 			if c.onResponse != nil {
 				msg, err = c.onResponse(ctx, msg)
 				if err != nil {
-					return &msg, err
+					return msg, err
 				}
 			}
-			return &msg, nil
+			return msg, nil
 		}
 	}
 }

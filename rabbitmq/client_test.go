@@ -1,14 +1,14 @@
-package rpc_test
+package rabbitmq_test
 
 import (
 	"context"
 	"testing"
 
-	"github.com/autom8ter/protoc-gen-rabbitmq/rpc"
+	"github.com/autom8ter/queuerpc/rabbitmq"
 )
 
 func TestClient(t *testing.T) {
-	rpcClient, err := rpc.NewClient("amqp://guest:guest@localhost:5672/", "echo")
+	rpcClient, err := rabbitmq.NewClient("amqp://guest:guest@localhost:5672/", "echo")
 	if err != nil {
 		t.Fatal(err)
 	}

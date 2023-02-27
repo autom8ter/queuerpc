@@ -1,16 +1,17 @@
-package rpc
+package rabbitmq
 
 import (
 	"context"
 	"crypto/tls"
-	"time"
+
+	"github.com/autom8ter/queuerpc"
 )
 
 type clientOpts struct {
 	tls          *tls.Config
 	errorHandler func(msg string, err error)
-	onRequest    func(ctx context.Context, msg Message) (Message, error)
-	onResponse   func(ctx context.Context, msg Message) (Message, error)
+	onRequest    func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
+	onResponse   func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
 }
 
 // ClientOption is a function that configures a client
@@ -32,7 +33,7 @@ func WithClientErrorHandler(f func(msg string, err error)) ClientOption {
 
 // WithClientOnRequest sets the onRequest handler for the client
 // onRequest is called before a request is sent to the server and can be used to modify the request or add things like logging/validation
-func WithClientOnRequest(f func(ctx context.Context, msg Message) (Message, error)) ClientOption {
+func WithClientOnRequest(f func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)) ClientOption {
 	return func(opts *clientOpts) {
 		opts.onRequest = f
 	}
@@ -40,23 +41,9 @@ func WithClientOnRequest(f func(ctx context.Context, msg Message) (Message, erro
 
 // WithClientOnResponse sets the onResponse handler for the client
 // this is called when the client receives a response from the server and can be used to modify the response or add things like logging/validation
-func WithClientOnResponse(f func(ctx context.Context, msg Message) (Message, error)) ClientOption {
+func WithClientOnResponse(f func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)) ClientOption {
 	return func(opts *clientOpts) {
 		opts.onResponse = f
-	}
-}
-
-type requestOpts struct {
-	timeout time.Duration
-}
-
-// RequestOption is a function that configures a a client side rpc request
-type RequestOption func(*requestOpts)
-
-// WithTimeout sets the timeout for the request
-func WithTimeout(t time.Duration) RequestOption {
-	return func(o *requestOpts) {
-		o.timeout = t
 	}
 }
 
@@ -64,8 +51,8 @@ func WithTimeout(t time.Duration) RequestOption {
 type serverOpts struct {
 	tls          *tls.Config
 	errorHandler func(msg string, err error)
-	onRequest    func(ctx context.Context, msg Message) (Message, error)
-	onResponse   func(ctx context.Context, msg Message) (Message, error)
+	onRequest    func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
+	onResponse   func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
 }
 
 // ServerOption is a function that configures a server
@@ -87,7 +74,7 @@ func WithServerErrorHandler(f func(msg string, err error)) ServerOption {
 
 // WithServerOnRequest sets the onRequest handler for the server
 // onRequest is called when the server receives a request and can be used to modify the request or add things like logging/validation
-func WithServerOnRequest(f func(ctx context.Context, msg Message) (Message, error)) ServerOption {
+func WithServerOnRequest(f func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)) ServerOption {
 	return func(opts *serverOpts) {
 		opts.onRequest = f
 	}
@@ -95,7 +82,7 @@ func WithServerOnRequest(f func(ctx context.Context, msg Message) (Message, erro
 
 // WithServerOnResponse sets the onResponse handler for the server
 // this is called after the server has processed the request and can be used to modify the response or add things like logging/validation
-func WithServerOnResponse(f func(ctx context.Context, msg Message) (Message, error)) ServerOption {
+func WithServerOnResponse(f func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)) ServerOption {
 	return func(opts *serverOpts) {
 		opts.onResponse = f
 	}
