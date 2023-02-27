@@ -58,7 +58,7 @@ func Serve(ctx context.Context, srv queuerpc.IServer, handler EchoServiceServer)
 					Id:       msg.Id,
 					Method:   msg.Method,
 					Metadata: meta,
-					Error:    err,
+					Error:    queuerpc.ErrUnmarshal,
 				}
 			}
 			out, err := handler.Echo(queuerpc.NewContextWithMetadata(ctx, meta), &in)
@@ -67,7 +67,7 @@ func Serve(ctx context.Context, srv queuerpc.IServer, handler EchoServiceServer)
 					Id:       msg.Id,
 					Method:   msg.Method,
 					Metadata: meta,
-					Error:    err,
+					Error:    queuerpc.ErrorFrom(err),
 				}
 			}
 			body, err := proto.Marshal(out)
@@ -76,7 +76,7 @@ func Serve(ctx context.Context, srv queuerpc.IServer, handler EchoServiceServer)
 					Id:       msg.Id,
 					Method:   msg.Method,
 					Metadata: meta,
-					Error:    err,
+					Error:    queuerpc.ErrMarshal,
 				}
 			}
 			return &queuerpc.Message{
