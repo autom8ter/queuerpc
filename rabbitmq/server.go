@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"time"
 
 	"github.com/autom8ter/machine/v4"
 	"github.com/autom8ter/queuerpc"
 	"github.com/golang/protobuf/proto"
-	"github.com/google/uuid"
 	"github.com/rabbitmq/amqp091-go"
 )
 
@@ -17,7 +17,6 @@ var _ queuerpc.IServer = &Server{}
 // Server is a server that handles rpc requests
 type Server struct {
 	session      *session
-	outbox       string
 	inbox        string
 	machine      machine.Machine
 	errorHandler func(msg string, err error)
@@ -40,7 +39,6 @@ func NewServer(url string, service string, opts ...ServerOption) (*Server, error
 		}
 	}
 	inbox := fmt.Sprintf("rpc.%s.server", service)
-	outbox := fmt.Sprintf("rpc.%s.client", service)
 	var (
 		conn *amqp091.Connection
 		err  error
@@ -71,19 +69,18 @@ func NewServer(url string, service string, opts ...ServerOption) (*Server, error
 		return nil, fmt.Errorf("failed to declare queue: %s", err.Error())
 	}
 	s := &Server{
-		session:      newSession(url, o.tls, inbox),
-		outbox:       outbox,
+		session:      newSession(url, o.tls),
 		inbox:        inbox,
 		machine:      machine.New(),
 		errorHandler: o.errorHandler,
 		onRequest:    o.onRequest,
 		onResponse:   o.onResponse,
 	}
-	return s, s.session.Connect()
+	return s, s.session.Connect(inbox)
 }
 
 // Serve starts the server. This is a blocking call. It will return an error when the context is canceled.
-func (s *Server) Serve(handler queuerpc.HandlerFunc) error {
+func (s *Server) Serve(handler queuerpc.Handlers) error {
 	s.machine.Go(s.session.ctx, func(ctx context.Context) error {
 		return s.session.Consume(func(delivery amqp091.Delivery) {
 			if delivery.Body == nil {
@@ -93,45 +90,140 @@ func (s *Server) Serve(handler queuerpc.HandlerFunc) error {
 			s.machine.Go(ctx, func(ctx context.Context) error {
 				var (
 					msg = &queuerpc.Message{}
-					err error
 				)
 				if err := proto.Unmarshal(delivery.Body, msg); err != nil {
 					s.errorHandler(err.Error(), queuerpc.ErrUnmarshal)
 					return nil
 				}
-				if s.onRequest != nil {
-					msg, err = s.onRequest(ctx, msg)
-					if err != nil {
-						s.errorHandler("error executing onRequest", err)
+				switch msg.Type {
+				case queuerpc.Type_UNARY:
+					if err := s.handleUnary(ctx, msg, handler); err != nil {
+						s.errorHandler("error handling unary request", err)
 						return nil
 					}
-				}
-				resp := handler(ctx, msg)
-				if s.onResponse != nil {
-					resp, err = s.onResponse(ctx, resp)
-					if err != nil {
-						s.errorHandler("error executing onResponse", err)
+				case queuerpc.Type_CLIENT_STREAM:
+					if err := s.handleClientStream(ctx, msg, handler); err != nil {
+						s.errorHandler("error handling client stream request", err)
 						return nil
 					}
-				}
-				bits, err := proto.Marshal(resp)
-				if err != nil {
-					s.errorHandler(err.Error(), queuerpc.ErrMarshal)
-					return nil
-				}
-				if err := s.session.Publish(ctx, amqp091.Publishing{
-					MessageId:     uuid.NewString(),
-					CorrelationId: delivery.CorrelationId,
-					Body:          bits,
-				}, delivery.ReplyTo); err != nil {
-					// TODO: reconnect
-					s.errorHandler(err.Error(), ErrPublishMessage)
+				case queuerpc.Type_SERVER_STREAM:
+					if err := s.handleServerStream(ctx, msg, handler); err != nil {
+						s.errorHandler("error handling stream request", err)
+						return nil
+					}
 				}
 				return nil
 			})
 		})
 	})
 	return s.machine.Wait()
+}
+
+func (s *Server) handleClientStream(ctx context.Context, msg *queuerpc.Message, handlers queuerpc.Handlers) error {
+	if handlers.ClientStreamHandler == nil {
+		return fmt.Errorf("no client stream handler")
+	}
+	var err error
+	if s.onRequest != nil {
+		msg, err = s.onRequest(ctx, msg)
+		if err != nil {
+			s.errorHandler("error executing onRequest", err)
+			return nil
+		}
+	}
+	if err := handlers.ClientStreamHandler(ctx, msg); err != nil {
+		s.errorHandler("error executing client stream handler", err)
+		return nil
+	}
+	return nil
+}
+
+func (s *Server) handleServerStream(ctx context.Context, msg *queuerpc.Message, handlers queuerpc.Handlers) error {
+	if handlers.ServerStreamHandler == nil {
+		return fmt.Errorf("no server server stream handler")
+	}
+	var err error
+	if s.onRequest != nil {
+		msg, err = s.onRequest(ctx, msg)
+		if err != nil {
+			s.errorHandler("error executing onRequest", err)
+			return nil
+		}
+	}
+	ch, err := handlers.ServerStreamHandler(ctx, msg)
+	if err != nil {
+		s.errorHandler("error executing server stream handler", err)
+		return nil
+	}
+	for {
+		select {
+		case <-ctx.Done():
+			return nil
+		case resp, ok := <-ch:
+			if !ok {
+				return nil
+			}
+			resp.Id = msg.Id
+			resp.Method = msg.Method
+			resp.Type = msg.Type
+			resp.Timestamp = time.Now().UnixMilli()
+			if s.onResponse != nil {
+				resp, err = s.onResponse(ctx, resp)
+				if err != nil {
+					s.errorHandler("error executing onResponse", err)
+					return nil
+				}
+			}
+			bits, err := proto.Marshal(resp)
+			if err != nil {
+				s.errorHandler(err.Error(), queuerpc.ErrMarshal)
+				return nil
+			}
+			if err := s.session.Publish(ctx, amqp091.Publishing{
+				Body: bits,
+			}, msg.ReplyTo); err != nil {
+				s.errorHandler(err.Error(), ErrPublishMessage)
+			}
+		}
+	}
+}
+
+func (s *Server) handleUnary(ctx context.Context, msg *queuerpc.Message, handlers queuerpc.Handlers) error {
+	if handlers.UnaryHandler == nil {
+		return fmt.Errorf("no server unary handler")
+	}
+	var err error
+	if s.onRequest != nil {
+		msg, err = s.onRequest(ctx, msg)
+		if err != nil {
+			s.errorHandler("error executing onRequest", err)
+			return nil
+		}
+	}
+	resp := handlers.UnaryHandler(ctx, msg)
+	resp.Id = msg.Id
+	resp.Method = msg.Method
+	resp.Type = msg.Type
+	resp.Timestamp = time.Now().UnixMilli()
+	if s.onResponse != nil {
+		resp, err = s.onResponse(ctx, resp)
+		if err != nil {
+			s.errorHandler("error executing onResponse", err)
+			return nil
+		}
+	}
+	bits, err := proto.Marshal(resp)
+	if err != nil {
+		s.errorHandler(err.Error(), queuerpc.ErrMarshal)
+		return nil
+	}
+	if err := s.session.Publish(ctx, amqp091.Publishing{
+		CorrelationId: msg.Id,
+		Body:          bits,
+	}, msg.ReplyTo); err != nil {
+		s.errorHandler(err.Error(), ErrPublishMessage)
+	}
+	return nil
 }
 
 func (s *Server) Close() error {

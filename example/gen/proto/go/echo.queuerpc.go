@@ -12,50 +12,54 @@ type EchoServiceServer interface {
 
 // Serve starts the server and blocks until the context is canceled or the deadline is exceeded
 func Serve(srv queuerpc.IServer, handler EchoServiceServer) error {
-	return srv.Serve(func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
-		meta := msg.Metadata
-		switch msg.Method {
-		case "Echo":
-			var in EchoRequest
-			if err := proto.Unmarshal(msg.Body, &in); err != nil {
-				return &queuerpc.Message{
-					Id:       msg.Id,
-					Method:   msg.Method,
-					Metadata: meta,
-					Error:    queuerpc.ErrUnmarshal,
+	return srv.Serve(queuerpc.Handlers{
+		UnaryHandler: func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
+			meta := msg.Metadata
+			switch msg.Method {
+			case "Echo":
+				var in EchoRequest
+				if err := proto.Unmarshal(msg.Body, &in); err != nil {
+					return &queuerpc.Message{
+						Id:       msg.Id,
+						Method:   msg.Method,
+						Metadata: meta,
+						Error:    queuerpc.ErrUnmarshal,
+					}
 				}
-			}
-			out, err := handler.Echo(queuerpc.NewContextWithMetadata(ctx, meta), &in)
-			if err != nil {
-				return &queuerpc.Message{
-					Id:       msg.Id,
-					Method:   msg.Method,
-					Metadata: meta,
-					Error:    queuerpc.ErrorFrom(err),
+				out, err := handler.Echo(queuerpc.NewContextWithMetadata(ctx, meta), &in)
+				if err != nil {
+					return &queuerpc.Message{
+						Id:       msg.Id,
+						Method:   msg.Method,
+						Metadata: meta,
+						Error:    queuerpc.ErrorFrom(err),
+					}
 				}
-			}
-			body, err := proto.Marshal(out)
-			if err != nil {
+				body, err := proto.Marshal(out)
+				if err != nil {
+					return &queuerpc.Message{
+						Id:       msg.Id,
+						Method:   msg.Method,
+						Metadata: meta,
+						Error:    queuerpc.ErrMarshal,
+					}
+				}
 				return &queuerpc.Message{
 					Id:       msg.Id,
 					Method:   msg.Method,
 					Metadata: meta,
-					Error:    queuerpc.ErrMarshal,
+					Body:     body,
 				}
 			}
 			return &queuerpc.Message{
 				Id:       msg.Id,
 				Method:   msg.Method,
 				Metadata: meta,
-				Body:     body,
+				Error:    queuerpc.ErrUnsupportedMethod,
 			}
-		}
-		return &queuerpc.Message{
-			Id:       msg.Id,
-			Method:   msg.Method,
-			Metadata: meta,
-			Error:    queuerpc.ErrUnsupportedMethod,
-		}
+		},
+		ClientStreamHandler: nil,
+		ServerStreamHandler: nil,
 	})
 }
 

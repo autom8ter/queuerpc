@@ -14,7 +14,6 @@ import (
 type session struct {
 	url        string
 	cfg        *tls.Config
-	queue      string
 	conn       atomic.Pointer[amqp091.Connection]
 	channel    atomic.Pointer[amqp091.Channel]
 	deliveries atomic.Pointer[<-chan amqp091.Delivery]
@@ -23,22 +22,21 @@ type session struct {
 	cancel     func()
 }
 
-func newSession(url string, cfg *tls.Config, queue string) *session {
+func newSession(url string, cfg *tls.Config) *session {
 	ctx, cancel := context.WithCancel(context.Background())
 	return &session{
 		url:     url,
 		cfg:     cfg,
-		queue:   queue,
 		machine: machine.New(),
 		ctx:     ctx,
 		cancel:  cancel,
 	}
 }
 
-func (s *session) Connect() error {
+func (s *session) Connect(queue string) error {
 	var hasConnected bool
 	for i := 0; i < 60; i++ {
-		if err := s.connect(); err != nil {
+		if err := s.connect(queue); err != nil {
 			time.Sleep(1 * time.Second)
 			continue
 		}
@@ -51,7 +49,7 @@ func (s *session) Connect() error {
 	return nil
 }
 
-func (s *session) connect() error {
+func (s *session) connect(queue string) error {
 	var (
 		conn *amqp091.Connection
 		err  error
@@ -72,7 +70,7 @@ func (s *session) connect() error {
 		return fmt.Errorf("failed to create channel: %s", s.url)
 	}
 	if _, err := ch.QueueDeclare(
-		s.queue,
+		queue,
 		false, // durable
 		false, // delete when unused
 		false, // exclusive
@@ -82,7 +80,7 @@ func (s *session) connect() error {
 		return fmt.Errorf("failed to declare queue: %s", err.Error())
 	}
 	deliveries, err := ch.Consume(
-		s.queue,
+		queue,
 		"",
 		true,  // auto-ack
 		false, // exclusive
@@ -98,7 +96,7 @@ func (s *session) connect() error {
 	s.deliveries.Store(&deliveries)
 	go func() {
 		<-conn.NotifyClose(make(chan *amqp091.Error)) //Listen to NotifyClose
-		s.Connect()
+		s.Connect(queue)
 	}()
 	return nil
 }

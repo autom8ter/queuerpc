@@ -45,7 +45,7 @@ func NewClient(url string, service string, opts ...ClientOption) (*Client, error
 	inbox := fmt.Sprintf("rpc.%s.client", service)
 	outbox := fmt.Sprintf("rpc.%s.server", service)
 	c := &Client{
-		session:      newSession(url, o.tls, inbox),
+		session:      newSession(url, o.tls),
 		mu:           sync.RWMutex{},
 		awaiting:     map[string]chan *queuerpc.Message{},
 		inbox:        inbox,
@@ -54,7 +54,7 @@ func NewClient(url string, service string, opts ...ClientOption) (*Client, error
 		onRequest:    o.onRequest,
 		onResponse:   o.onResponse,
 	}
-	if err := c.session.Connect(); err != nil {
+	if err := c.session.Connect(inbox); err != nil {
 		return nil, err
 	}
 	c.connect()
@@ -141,6 +141,78 @@ func (c *Client) Request(ctx context.Context, body *queuerpc.Message, opts ...qu
 				}
 			}
 			return msg, nil
+		}
+	}
+}
+
+func (c *Client) ClientStream(ctx context.Context, requestChan chan *queuerpc.Message) error {
+	var err error
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case body, ok := <-requestChan:
+			if !ok {
+				return nil
+			}
+			id := uuid.NewString()
+			body.Id = id
+			body, err = c.onRequest(ctx, body)
+			if err != nil {
+				return err
+			}
+			bits, err := proto.Marshal(body)
+			if err != nil {
+				return err
+			}
+			pubMsg := amqp091.Publishing{
+				Body: bits,
+			}
+			if err := c.session.Publish(ctx, pubMsg, c.outbox); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (c *Client) ServerStream(ctx context.Context, body *queuerpc.Message, fn func(*queuerpc.Message)) error {
+	ch := make(chan *queuerpc.Message, 1)
+	c.mu.Lock()
+	if c.awaiting == nil {
+		c.awaiting = make(map[string]chan *queuerpc.Message)
+	}
+	id := uuid.NewString()
+	body.Id = id
+	c.awaiting[id] = ch
+	c.mu.Unlock()
+	bits, err := proto.Marshal(body)
+	if err != nil {
+		return err
+	}
+	pubMsg := amqp091.Publishing{
+		Body: bits,
+	}
+	if err := c.session.Publish(ctx, pubMsg, c.outbox); err != nil {
+		return err
+	}
+	defer func() {
+		c.mu.Lock()
+		delete(c.awaiting, id)
+		c.mu.Unlock()
+	}()
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case msg := <-ch:
+			if c.onResponse != nil {
+				msg, err = c.onResponse(ctx, msg)
+				if err != nil {
+					return err
+				}
+			}
+			fn(msg)
 		}
 	}
 }
