@@ -13,5 +13,6 @@ message EchoResponse {
 }
 
 service EchoService {
+  // Echo returns the same message it receives.
   rpc Echo(EchoRequest) returns (EchoResponse) {}
 }

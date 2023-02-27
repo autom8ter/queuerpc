@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/gob"
 	"fmt"
+	"log"
 	"sync"
 	"time"
 
@@ -13,49 +14,56 @@ import (
 	"github.com/rabbitmq/amqp091-go"
 )
 
-type RequestOpts struct {
-	Timeout time.Duration
-}
-
-type RequestOption func(*RequestOpts)
-
-func WithTimeout(t time.Duration) RequestOption {
-	return func(o *RequestOpts) {
-		o.Timeout = t
-	}
-}
-
+// Client is a client for making rpc requests through rabbitmq
 type Client struct {
-	session  func(ctx context.Context) (*session, error)
-	mu       sync.RWMutex
-	awaiting map[string]chan Message
-	outbox   string
-	inbox    string
-	machine  machine.Machine
-	ctx      context.Context
-	cancel   func()
+	session      func(ctx context.Context) (*session, error)
+	mu           sync.RWMutex
+	awaiting     map[string]chan Message
+	outbox       string
+	inbox        string
+	machine      machine.Machine
+	ctx          context.Context
+	cancel       func()
+	errorHandler func(msg string, err error)
+	onRequest    func(ctx context.Context, msg Message) (Message, error)
+	onResponse   func(ctx context.Context, msg Message) (Message, error)
 }
 
-func NewClient(url string, service string) (*Client, error) {
+// NewClient creates a new client for making rpc requests.
+// The client will automatically connect to the rabbitmq server and begin processing messages
+// The service name should be the same for the server and client
+func NewClient(url string, service string, opts ...ClientOption) (*Client, error) {
+	o := &clientOpts{}
+	for _, opt := range opts {
+		opt(o)
+	}
+	if o.errorHandler == nil {
+		o.errorHandler = func(msg string, err error) {
+			if err != nil {
+				log.Println(msg, err.Error())
+			}
+		}
+	}
 	inbox := fmt.Sprintf("rpc.%s.client", service)
 	outbox := fmt.Sprintf("rpc.%s.server", service)
-	conn, err := amqp091.Dial(url)
-	if err != nil {
-		return nil, err
+	var (
+		conn *amqp091.Connection
+		err  error
+	)
+	if o.tls == nil {
+		conn, err = amqp091.Dial(url)
+		if err != nil {
+			return nil, fmt.Errorf("failed to dial: %s", url)
+		}
+	} else {
+		conn, err = amqp091.DialTLS(url, o.tls)
+		if err != nil {
+			return nil, fmt.Errorf("failed to dial tls: %s", url)
+		}
 	}
 	ch, err := conn.Channel()
 	if err != nil {
-		return nil, err
-	}
-	if _, err := ch.QueueDeclare(
-		inbox,
-		false, // durable
-		false, // delete when unused
-		false, // exclusive
-		false, // no-wait
-		nil,   // arguments
-	); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create channel: %s", url)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	return &Client{
@@ -65,16 +73,20 @@ func NewClient(url string, service string) (*Client, error) {
 				channel: ch,
 			}, nil
 		},
-		mu:       sync.RWMutex{},
-		awaiting: map[string]chan Message{},
-		inbox:    inbox,
-		outbox:   outbox,
-		machine:  machine.New(),
-		ctx:      ctx,
-		cancel:   cancel,
+		mu:           sync.RWMutex{},
+		awaiting:     map[string]chan Message{},
+		inbox:        inbox,
+		outbox:       outbox,
+		machine:      machine.New(),
+		ctx:          ctx,
+		cancel:       cancel,
+		errorHandler: o.errorHandler,
+		onRequest:    o.onRequest,
+		onResponse:   o.onResponse,
 	}, nil
 }
 
+// Connect connects the client to the rabbitmq server and begins asynchronously processing messages
 func (c *Client) Connect(ctx context.Context) error {
 	c.mu.Lock()
 	defer c.mu.Unlock()
@@ -107,18 +119,20 @@ func (c *Client) Connect(ctx context.Context) error {
 			case <-time.After(5 * time.Second):
 				if sess.channel.IsClosed() {
 					// TODO: reconnect
-					return fmt.Errorf("channel closed")
+					c.errorHandler("", ErrChannelClosed)
+					return nil
 				}
 			case msg := <-deliveries:
 				if msg.Body == nil {
 					// TODO: reconnect
-					return fmt.Errorf("empty message received")
+					c.errorHandler("", ErrEmptyMessageReceived)
+					return nil
 				}
 				buf := bytes.NewBuffer(msg.Body)
 				var m Message
 				if err := gob.NewDecoder(buf).Decode(&m); err != nil {
-					c.mu.RUnlock()
-					return err
+					c.errorHandler(err.Error(), ErrDecodeMessage)
+					return nil
 				}
 				c.mu.RLock()
 				if ch, ok := c.awaiting[m.ID]; ok {
@@ -134,14 +148,22 @@ func (c *Client) Connect(ctx context.Context) error {
 	return nil
 }
 
+// Request sends a request to the server and returns the response and an error if one was encountered
 func (c *Client) Request(ctx context.Context, body Message, opts ...RequestOption) (*Message, error) {
-	requestOpt := &RequestOpts{
-		Timeout: 60 * time.Second,
+	requestOpt := &requestOpts{
+		timeout: 60 * time.Second,
 	}
 	for _, opt := range opts {
 		opt(requestOpt)
 	}
-	ctx, cancel := context.WithTimeout(ctx, requestOpt.Timeout)
+	var err error
+	if c.onRequest != nil {
+		body, err = c.onRequest(ctx, body)
+		if err != nil {
+			return nil, err
+		}
+	}
+	ctx, cancel := context.WithTimeout(ctx, requestOpt.timeout)
 	defer cancel()
 	sess, err := c.session(ctx)
 	if err != nil {
@@ -165,7 +187,7 @@ func (c *Client) Request(ctx context.Context, body Message, opts ...RequestOptio
 		CorrelationId: body.ID,
 		Body:          buf.Bytes(),
 		ReplyTo:       c.inbox,
-		Expiration:    fmt.Sprintf("%d", requestOpt.Timeout.Milliseconds()),
+		Expiration:    fmt.Sprintf("%d", requestOpt.timeout.Milliseconds()),
 	}
 	if err := sess.channel.PublishWithContext(ctx, "", c.outbox, false, false, pubMsg); err != nil {
 		return nil, err
@@ -178,11 +200,18 @@ func (c *Client) Request(ctx context.Context, body Message, opts ...RequestOptio
 			c.mu.Lock()
 			delete(c.awaiting, id)
 			c.mu.Unlock()
+			if c.onResponse != nil {
+				msg, err = c.onResponse(ctx, msg)
+				if err != nil {
+					return &msg, err
+				}
+			}
 			return &msg, nil
 		}
 	}
 }
 
+// Close closes the client and waits for all goroutines to exit
 func (c *Client) Close() error {
 	c.cancel()
 	return c.machine.Wait()

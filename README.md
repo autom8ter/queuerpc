@@ -10,18 +10,26 @@ a protoc plugin to generate type safe RabbitMQ RPC client and server code based 
 
 Given the Following protobuf service definition:
 
-    syntax = "proto3";
-    package example;
-    option go_package = "github.com/autom8ter/protoc-gen-rabbitmq/example";
-    service Example {
-      rpc Echo(EchoRequest) returns (EchoResponse) {}
-    }
-    message EchoRequest {
-      string message = 1;
-    }
-    message EchoResponse {
-      string message = 1;
-    }
+```protobuf
+syntax = "proto3";
+
+package echo.v1;
+option go_package = "github.com/autom8ter/example/echo/v1";
+
+
+message EchoRequest {
+  string message = 1;
+}
+
+message EchoResponse {
+  string message = 1;
+}
+
+service EchoService {
+  // Echo returns the same message it receives.
+  rpc Echo(EchoRequest) returns (EchoResponse) {}
+}
+```
 
 a type safe client and server will be generated:
 
@@ -32,12 +40,14 @@ import "context"
 import "github.com/autom8ter/protoc-gen-rabbitmq/rpc"
 import "github.com/golang/protobuf/proto"
 
-// EchoServiceServer is a RabbitMQ service
+// EchoServiceServer is a type safe RabbitMQ rpc server
 type EchoServiceServer interface {
+	// Echo returns the same message it receives.
 	Echo(ctx context.Context, in *EchoRequest) (*EchoResponse, error)
 }
 
-func Serve(ctx context.Context, srv *rpc.Server, handler EchoServiceServer) error {
+// Serve starts the server and blocks until the context is canceled or the deadline is exceeded
+func Serve(ctx context.Context, srv rpc.IServer, handler EchoServiceServer) error {
 	return srv.Serve(ctx, func(ctx context.Context, msg rpc.Message) rpc.Message {
 		meta := msg.Metadata
 		switch msg.Method {
@@ -51,7 +61,7 @@ func Serve(ctx context.Context, srv *rpc.Server, handler EchoServiceServer) erro
 					Error:    err,
 				}
 			}
-			out, err := handler.Echo(ctx, &in)
+			out, err := handler.Echo(rpc.NewContextWithMetadata(ctx, meta), &in)
 			if err != nil {
 				return rpc.Message{
 					ID:       msg.ID,
@@ -85,21 +95,25 @@ func Serve(ctx context.Context, srv *rpc.Server, handler EchoServiceServer) erro
 	})
 }
 
-// EchoServiceClient is a RabbitMQ client
+// EchoServiceClient is a type safe RabbitMQ rpc client
 type EchoServiceClient struct {
-	client *rpc.Client
+	client rpc.IClient
 }
 
-func NewEchoServiceClient(client *rpc.Client) *EchoServiceClient {
+// NewEchoServiceClient returns a new EchoServiceClientwith the given rpc client
+func NewEchoServiceClient(client rpc.IClient) *EchoServiceClient {
 	return &EchoServiceClient{client: client}
 }
+
+// Echo returns the same message it receives.
 func (c *EchoServiceClient) Echo(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
+	meta := rpc.MetadataFromContext(ctx)
 	var out EchoResponse
 	body, err := proto.Marshal(in)
 	if err != nil {
 		return nil, err
 	}
-	msg, err := c.client.Request(ctx, rpc.Message{Method: "Echo", Body: body})
+	msg, err := c.client.Request(ctx, rpc.Message{Method: "Echo", Body: body, Metadata: meta})
 	if err != nil {
 		return nil, err
 	}

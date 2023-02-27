@@ -15,13 +15,14 @@ var imports = []string{
 func generateServer(genFile *protogen.GeneratedFile, s *protogen.Service) {
 	var serverName = s.GoName + "Server"
 	//var clientName = s.GoName + "Client"
-	genFile.P("// ", serverName, " is a RabbitMQ service")
+	genFile.P("// ", serverName, " is a type safe RabbitMQ rpc server")
 	genFile.P("type ", serverName, " interface {")
 	for _, m := range s.Methods {
-		genFile.P(m.GoName, "(ctx context.Context, in *", m.Input.GoIdent, ") (*", m.Output.GoIdent, ", error)")
+		genFile.P(m.Comments.Leading.String(), m.GoName, "(ctx context.Context, in *", m.Input.GoIdent, ") (*", m.Output.GoIdent, ", error)")
 	}
 	genFile.P("}")
-	genFile.P(`func Serve(ctx context.Context, srv *rpc.Server, handler `, serverName, `) error {`)
+	genFile.P("// Serve starts the server and blocks until the context is canceled or the deadline is exceeded")
+	genFile.P(`func Serve(ctx context.Context, srv rpc.IServer, handler `, serverName, `) error {`)
 	genFile.P(`return srv.Serve(ctx, func(ctx context.Context, msg rpc.Message) rpc.Message {`)
 	genFile.P(`meta := msg.Metadata`)
 	genFile.P(`switch msg.Method {`)
@@ -36,7 +37,7 @@ func generateServer(genFile *protogen.GeneratedFile, s *protogen.Service) {
 		genFile.P(`Error:    err,`)
 		genFile.P(`}`)
 		genFile.P(`}`)
-		genFile.P(`out, err := handler.`, m.GoName, `(ctx, &in)`)
+		genFile.P(`out, err := handler.`, m.GoName, `(rpc.NewContextWithMetadata(ctx, meta), &in)`)
 		genFile.P(`if err != nil {`)
 		genFile.P(`return rpc.Message{`)
 		genFile.P(`ID:       msg.ID,`)
@@ -74,21 +75,24 @@ func generateServer(genFile *protogen.GeneratedFile, s *protogen.Service) {
 
 func generateClient(genFile *protogen.GeneratedFile, s *protogen.Service) {
 	var clientName = s.GoName + "Client"
-	genFile.P("// ", clientName, " is a RabbitMQ client")
+	genFile.P("// ", clientName, " is a type safe RabbitMQ rpc client")
 	genFile.P("type ", clientName, " struct {")
-	genFile.P("client *rpc.Client")
+	genFile.P("client rpc.IClient")
 	genFile.P("}")
-	genFile.P("func New", clientName, "(client *rpc.Client) *", clientName, " {")
+	genFile.P("// New", clientName, " returns a new ", clientName, "with the given rpc client")
+	genFile.P("func New", clientName, "(client rpc.IClient) *", clientName, " {")
 	genFile.P("return &", clientName, "{client: client}")
 	genFile.P("}")
+	genFile.P("\n")
 	for _, m := range s.Methods {
-		genFile.P("func (c *", clientName, ") ", m.GoName, "(ctx context.Context, in *", m.Input.GoIdent, ") (*", m.Output.GoIdent, ", error) {")
+		genFile.P(m.Comments.Leading.String(), "func (c *", clientName, ") ", m.GoName, "(ctx context.Context, in *", m.Input.GoIdent, ") (*", m.Output.GoIdent, ", error) {")
+		genFile.P("meta := rpc.MetadataFromContext(ctx)")
 		genFile.P("var out ", m.Output.GoIdent)
 		genFile.P("body, err := proto.Marshal(in)")
 		genFile.P("if err != nil {")
 		genFile.P("return nil, err")
 		genFile.P("}")
-		genFile.P("msg, err := c.client.Request(ctx, rpc.Message{Method: \"", m.GoName, "\", Body: body})")
+		genFile.P("msg, err := c.client.Request(ctx, rpc.Message{Method: \"", m.GoName, "\", Body: body, Metadata: meta})")
 		genFile.P("if err != nil {")
 		genFile.P("return nil, err")
 		genFile.P("}")
@@ -103,6 +107,7 @@ func generateClient(genFile *protogen.GeneratedFile, s *protogen.Service) {
 	}
 }
 
+// Plugin is a protoc plugin that generates RabbitMQ rpc bindings for Go.
 func Plugin() func(gen *protogen.Plugin) error {
 	return func(gen *protogen.Plugin) error {
 		for _, f := range gen.Files {
