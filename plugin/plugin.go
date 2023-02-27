@@ -22,8 +22,8 @@ func generateServer(genFile *protogen.GeneratedFile, s *protogen.Service) {
 	}
 	genFile.P("}")
 	genFile.P("// Serve starts the server and blocks until the context is canceled or the deadline is exceeded")
-	genFile.P(`func Serve(ctx context.Context, srv queuerpc.IServer, handler `, serverName, `) error {`)
-	genFile.P(`return srv.Serve(ctx, func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {`)
+	genFile.P(`func Serve(srv queuerpc.IServer, handler `, serverName, `) error {`)
+	genFile.P(`return srv.Serve(func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {`)
 	genFile.P(`meta := msg.Metadata`)
 	genFile.P(`switch msg.Method {`)
 	for _, m := range s.Methods {

@@ -8,11 +8,11 @@ import (
 )
 
 func TestClient(t *testing.T) {
-	rpcClient, err := rabbitmq.NewClient("amqp://guest:guest@localhost:5672/", "echo")
+	client, err := rabbitmq.NewClient("amqp://guest:guest@localhost:5672/", "echo")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := rpcClient.Connect(context.Background()); err != nil {
-		t.Fatal(err)
+	if err := client.Close(); err != nil && err != context.Canceled && err != context.DeadlineExceeded {
+		t.Error(err)
 	}
 }

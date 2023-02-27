@@ -24,7 +24,7 @@ func main() {
 	if err != nil {
 		panic(err)
 	}
-	if err := v1.Serve(context.Background(), srv, &server{}); err != nil {
+	if err := v1.Serve(srv, &server{}); err != nil {
 		panic(err)
 	}
 }

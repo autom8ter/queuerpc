@@ -10,13 +10,19 @@ import (
 )
 
 func TestServer(t *testing.T) {
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 	srv, err := rabbitmq.NewServer("amqp://guest:guest@localhost:5672/", "echo")
 	if err != nil {
 		panic(err)
 	}
-	err = srv.Serve(ctx, func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
+	go func() {
+		<-time.After(5 * time.Second)
+		t.Log("closing server")
+		if err := srv.Close(); err != nil {
+			t.Error(err)
+			return
+		}
+	}()
+	err = srv.Serve(func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
 		return msg
 	})
 	if err != nil && err != context.Canceled && err != context.DeadlineExceeded {

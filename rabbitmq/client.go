@@ -7,7 +7,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/autom8ter/machine/v4"
 	"github.com/autom8ter/queuerpc"
 	"github.com/golang/protobuf/proto"
 	"github.com/google/uuid"
@@ -18,14 +17,11 @@ var _ queuerpc.IClient = &Client{}
 
 // Client is a client for making rpc requests through rabbitmq
 type Client struct {
-	session      func(ctx context.Context) (*session, error)
+	session      *session
 	mu           sync.RWMutex
 	awaiting     map[string]chan *queuerpc.Message
 	outbox       string
 	inbox        string
-	machine      machine.Machine
-	ctx          context.Context
-	cancel       func()
 	errorHandler func(msg string, err error)
 	onRequest    func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
 	onResponse   func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error)
@@ -48,115 +44,47 @@ func NewClient(url string, service string, opts ...ClientOption) (*Client, error
 	}
 	inbox := fmt.Sprintf("rpc.%s.client", service)
 	outbox := fmt.Sprintf("rpc.%s.server", service)
-	var (
-		conn *amqp091.Connection
-		err  error
-	)
-	if o.tls == nil {
-		conn, err = amqp091.Dial(url)
-		if err != nil {
-			return nil, fmt.Errorf("failed to dial: %s", url)
-		}
-	} else {
-		conn, err = amqp091.DialTLS(url, o.tls)
-		if err != nil {
-			return nil, fmt.Errorf("failed to dial tls: %s", url)
-		}
-	}
-	ch, err := conn.Channel()
-	if err != nil {
-		return nil, fmt.Errorf("failed to create channel: %s", url)
-	}
-	if _, err := ch.QueueDeclare(
-		inbox,
-		false, // durable
-		false, // delete when unused
-		false, // exclusive
-		false, // no-wait
-		nil,   // arguments
-	); err != nil {
-		return nil, fmt.Errorf("failed to declare queue: %s", err.Error())
-	}
-	ctx, cancel := context.WithCancel(context.Background())
-	return &Client{
-		session: func(ctx context.Context) (*session, error) {
-			return &session{
-				conn:    conn,
-				channel: ch,
-			}, nil
-		},
+	c := &Client{
+		session:      newSession(url, o.tls, inbox),
 		mu:           sync.RWMutex{},
 		awaiting:     map[string]chan *queuerpc.Message{},
 		inbox:        inbox,
 		outbox:       outbox,
-		machine:      machine.New(),
-		ctx:          ctx,
-		cancel:       cancel,
 		errorHandler: o.errorHandler,
 		onRequest:    o.onRequest,
 		onResponse:   o.onResponse,
-	}, nil
+	}
+	if err := c.session.Connect(); err != nil {
+		return nil, err
+	}
+	c.connect()
+	return c, nil
 }
 
-// Connect connects the client to the rabbitmq server and begins asynchronously processing messages
-func (c *Client) Connect(ctx context.Context) error {
+func (c *Client) connect() {
 	c.mu.Lock()
 	defer c.mu.Unlock()
-	ctx, cancel := context.WithCancel(context.Background())
-	c.ctx = ctx
-	c.cancel = cancel
-	c.machine.Go(c.ctx, func(ctx context.Context) error {
-		sess, err := c.session(ctx)
-		if err != nil {
-			return err
-		}
-		deliveries, err := sess.channel.Consume(
-			c.inbox,
-			"",
-			true,  // auto-ack
-			false, // exclusive
-			false, // no-local
-			false, // no-wait
-			nil,   // args
-		)
-		if err != nil {
-			return fmt.Errorf("failed to consume: %w", err)
-		}
-		ctx, cancel := context.WithCancel(ctx)
-		defer cancel()
-		for {
-			select {
-			case <-ctx.Done():
-				return ctx.Err()
-			case <-time.After(5 * time.Second):
-				if sess.channel.IsClosed() {
-					// TODO: reconnect
-					c.errorHandler("", ErrChannelClosed)
-					return nil
-				}
-			case delivery := <-deliveries:
-				if delivery.Body == nil {
-					// TODO: reconnect
-					c.errorHandler("", ErrEmptyMessageReceived)
-					return nil
-				}
-				var m queuerpc.Message
-				if err := proto.Unmarshal(delivery.Body, &m); err != nil {
-					c.errorHandler(err.Error(), queuerpc.ErrUnmarshal)
-					return nil
-				}
-				c.mu.RLock()
-				if ch, ok := c.awaiting[m.GetId()]; ok {
-					c.machine.Go(ctx, func(ctx context.Context) error {
-						ch <- &m
-						return nil
-					})
-				}
-				c.mu.RUnlock()
+	c.session.machine.Go(c.session.ctx, func(ctx context.Context) error {
+		return c.session.Consume(func(delivery amqp091.Delivery) {
+			if delivery.Body == nil {
+				c.errorHandler("", ErrEmptyMessageReceived)
+				return
 			}
-		}
+			var m queuerpc.Message
+			if err := proto.Unmarshal(delivery.Body, &m); err != nil {
+				c.errorHandler(err.Error(), queuerpc.ErrUnmarshal)
+				return
+			}
+			c.mu.RLock()
+			if ch, ok := c.awaiting[m.GetId()]; ok {
+				c.session.machine.Go(ctx, func(ctx context.Context) error {
+					ch <- &m
+					return nil
+				})
+			}
+			c.mu.RUnlock()
+		})
 	})
-	return nil
 }
 
 // Request sends a request to the server and returns the response and an error if one was encountered
@@ -176,11 +104,6 @@ func (c *Client) Request(ctx context.Context, body *queuerpc.Message, opts ...qu
 	}
 	ctx, cancel := context.WithTimeout(ctx, requestOpt.Timeout)
 	defer cancel()
-	sess, err := c.session(ctx)
-	if err != nil {
-		return nil, err
-	}
-
 	ch := make(chan *queuerpc.Message, 1)
 	c.mu.Lock()
 	if c.awaiting == nil {
@@ -200,7 +123,7 @@ func (c *Client) Request(ctx context.Context, body *queuerpc.Message, opts ...qu
 		ReplyTo:       c.inbox,
 		Expiration:    fmt.Sprintf("%d", requestOpt.Timeout.Milliseconds()),
 	}
-	if err := sess.channel.PublishWithContext(ctx, "", c.outbox, false, false, pubMsg); err != nil {
+	if err := c.session.Publish(ctx, pubMsg, c.outbox); err != nil {
 		return nil, err
 	}
 	for {
@@ -224,6 +147,5 @@ func (c *Client) Request(ctx context.Context, body *queuerpc.Message, opts ...qu
 
 // Close closes the client and waits for all goroutines to exit
 func (c *Client) Close() error {
-	c.cancel()
-	return c.machine.Wait()
+	return c.session.Close()
 }

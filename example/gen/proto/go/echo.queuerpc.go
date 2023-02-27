@@ -11,8 +11,8 @@ type EchoServiceServer interface {
 }
 
 // Serve starts the server and blocks until the context is canceled or the deadline is exceeded
-func Serve(ctx context.Context, srv queuerpc.IServer, handler EchoServiceServer) error {
-	return srv.Serve(ctx, func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
+func Serve(srv queuerpc.IServer, handler EchoServiceServer) error {
+	return srv.Serve(func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
 		meta := msg.Metadata
 		switch msg.Method {
 		case "Echo":
