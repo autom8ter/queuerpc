@@ -77,6 +77,8 @@ func Serve(srv queuerpc.IServer, handler EchoServiceServer) error {
 				}
 				go func() {
 					defer close(ch)
+					ctx, cancel := context.WithCancel(ctx)
+					defer cancel()
 					for {
 						select {
 						case <-ctx.Done():

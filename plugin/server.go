@@ -77,6 +77,8 @@ func generateServerStreamHandler(genFile *protogen.GeneratedFile, s *protogen.Se
 		genFile.P(`}`)
 		genFile.P(`go func() {`)
 		genFile.P(`defer close(ch)`)
+		genFile.P(`ctx, cancel := context.WithCancel(ctx)`)
+		genFile.P(`defer cancel()`)
 		genFile.P(`for {`)
 		genFile.P(`select {`)
 		genFile.P(`case <-ctx.Done():`)
@@ -97,18 +99,6 @@ func generateServerStreamHandler(genFile *protogen.GeneratedFile, s *protogen.Se
 
 		genFile.P(`}()`)
 		genFile.P(`return ch, nil`)
-		//genFile.P(`for {`)
-		//genFile.P(`select {`)
-		//genFile.P(`case <-ctx.Done():`)
-		//genFile.P(`return`)
-		//genFile.P(`case out, ok := <-out:`)
-		//genFile.P(`if !ok {`)
-		//genFile.P(`return`)
-		//genFile.P(`}`)
-		//
-		////genFile.P(`}`)
-		//genFile.P(`}()`)
-
 	}
 	genFile.P(`}`)
 	genFile.P(`},`)
