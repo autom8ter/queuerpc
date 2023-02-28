@@ -5,6 +5,10 @@ a protoc plugin to generate type safe RPC client and server code that use a mess
 ## Installation
 
     go install github.com/autom8ter/queuerpc/protoc-gen-queuerpc
+    
+## Goals
+
+A protoc generator that feels like gRPC but communication between client and server happens over a message queue instead of http2.
 
 ## Usage
 
@@ -32,7 +36,7 @@ service EchoService {
 }
 ```
 
-a type safe client and server will be generated:
+a type safe client and server will be generated when using protoc-gen-queuerpc:
 
 ```go
 package v1
@@ -190,8 +194,21 @@ func (c *EchoServiceClient) EchoServerStream(ctx context.Context, in *EchoReques
 see [example](example) for a full example of a client and server
 example code generated using [Makefile](Makefile)
 
-### Limitations
+## Limitations
 - only supports proto3
 - only supports unary and server streaming rpcs
 - only supports rabbitmq as a transport (for now)
 - only supports generating clients and servers for go (for now)
+
+## TODO
+- [ ] kafka message queue provider
+- [ ] nats message queue provider
+- [ ] google pubsub message queue provider
+- [ ] aws sqs message queue provider
+- [ ] redis message queue provider
+- [ ] client -> server streaming support
+- [ ] bidirectional streaming support
+- [ ] support for generating an openapi proxy
+- [ ] typescript client/server code gen
+- [ ] rust client/server code gen
+- [ ] python client/server code gen
