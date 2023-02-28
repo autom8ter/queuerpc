@@ -111,6 +111,9 @@ func (c *Client) Request(ctx context.Context, body *queuerpc.Message, opts ...qu
 	}
 	id := uuid.NewString()
 	body.Id = id
+	body.Timestamp = time.Now().UnixMilli()
+	body.ReplyTo = c.inbox
+	body.Type = queuerpc.Type_UNARY
 	c.awaiting[id] = ch
 	c.mu.Unlock()
 	bits, err := proto.Marshal(body)
@@ -153,6 +156,9 @@ func (c *Client) ServerStream(ctx context.Context, body *queuerpc.Message, fn fu
 	}
 	id := uuid.NewString()
 	body.Id = id
+	body.Timestamp = time.Now().UnixMilli()
+	body.ReplyTo = c.inbox
+	body.Type = queuerpc.Type_SERVER_STREAM
 	c.awaiting[id] = ch
 	c.mu.Unlock()
 	bits, err := proto.Marshal(body)

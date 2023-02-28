@@ -8,6 +8,7 @@ import "github.com/golang/protobuf/proto"
 type EchoServiceServer interface {
 	// Echo returns the same message it receives.
 	Echo(ctx context.Context, in *EchoRequest) (*EchoResponse, error)
+	// EchoServerStream streams the same message it initially receives.
 	EchoServerStream(ctx context.Context, in *EchoRequest) (<-chan *EchoResponse, error)
 }
 
@@ -130,22 +131,19 @@ func (c *EchoServiceClient) Echo(ctx context.Context, in *EchoRequest) (*EchoRes
 	}
 	return &out, nil
 }
-func (c *EchoServiceClient) EchoServerStream(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
+
+// EchoServerStream streams the same message it initially receives.
+func (c *EchoServiceClient) EchoServerStream(ctx context.Context, in *EchoRequest, handler func(*EchoResponse)) error {
 	meta := queuerpc.MetadataFromContext(ctx)
-	var out EchoResponse
 	body, err := proto.Marshal(in)
 	if err != nil {
-		return nil, err
+		return err
 	}
-	msg, err := c.client.Request(ctx, &queuerpc.Message{Method: "EchoServerStream", Body: body, Metadata: meta})
-	if err != nil {
-		return nil, err
-	}
-	if msg.Error != nil {
-		return nil, msg.Error
-	}
-	if err := proto.Unmarshal(msg.Body, &out); err != nil {
-		return nil, err
-	}
-	return &out, nil
+	return c.client.ServerStream(ctx, &queuerpc.Message{Method: "EchoServerStream", Body: body, Metadata: meta}, func(msg *queuerpc.Message) {
+		var out EchoResponse
+		if err := proto.Unmarshal(msg.Body, &out); err != nil {
+			return
+		}
+		handler(&out)
+	})
 }

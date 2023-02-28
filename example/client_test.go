@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"testing"
+	"time"
 
 	"github.com/autom8ter/queuerpc"
 	v1 "github.com/autom8ter/queuerpc/example/gen/proto/go"
@@ -15,17 +16,31 @@ func Test(t *testing.T) {
 		rabbitmq.WithClientOnRequest(func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error) {
 			fmt.Println("sending request", msg.String())
 			return msg, nil
-		}))
+		}),
+	)
 	if err != nil {
 		t.Fatal(err)
 	}
 	client := v1.NewEchoServiceClient(rpcClient)
-	resp, err := client.Echo(context.Background(), &v1.EchoRequest{Message: "hello"})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if resp.Message != "hello" {
-		t.Fatal("expected hello")
-	}
-	t.Log(resp.Message)
+	t.Run("echo", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		resp, err := client.Echo(ctx, &v1.EchoRequest{Message: "hello"})
+		if err != nil && err != context.Canceled {
+			t.Fatal(err)
+		}
+		if resp.Message != "hello" {
+			t.Fatal("expected hello")
+		}
+	})
+	t.Run("echo server stream", func(t *testing.T) {
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+		defer cancel()
+		err := client.EchoServerStream(ctx, &v1.EchoRequest{Message: "hello"}, func(resp *v1.EchoResponse) {
+			t.Log(resp.Message)
+		})
+		if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
+			t.Fatal(err)
+		}
+	})
 }

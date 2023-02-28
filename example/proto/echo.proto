@@ -14,5 +14,6 @@ message EchoResponse {
 service EchoService {
   // Echo returns the same message it receives.
   rpc Echo(EchoRequest) returns (EchoResponse) {}
+  // EchoServerStream streams the same message it initially receives.
   rpc EchoServerStream(EchoRequest) returns (stream EchoResponse) {}
 }
