@@ -70,10 +70,8 @@ func generateServer(genFile *protogen.GeneratedFile, s *protogen.Service) {
 	genFile.P(`Metadata: meta,`)
 	genFile.P(`Error:    queuerpc.ErrUnsupportedMethod,`)
 	genFile.P(`}`)
-	genFile.P(`},`)
-	genFile.P(`ClientStreamHandler: nil,`)
-	genFile.P(`ServerStreamHandler: nil,`)
-	genFile.P(`})`)
+	genFile.P(`}})`)
+	genFile.P(`}`)
 }
 
 func generateClient(genFile *protogen.GeneratedFile, s *protogen.Service) {
