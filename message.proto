@@ -5,8 +5,7 @@ option go_package = "github.com/autom8ter/queuerpc";
 
 enum Type {
   UNARY = 0;
-  CLIENT_STREAM = 1;
-  SERVER_STREAM = 2;
+  SERVER_STREAM = 1;
 }
 
 // Message is an rpc message sent over a message-queue it is used as a client side request and server side response

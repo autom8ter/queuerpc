@@ -8,6 +8,7 @@ import "github.com/golang/protobuf/proto"
 type EchoServiceServer interface {
 	// Echo returns the same message it receives.
 	Echo(ctx context.Context, in *EchoRequest) (*EchoResponse, error)
+	EchoServerStream(ctx context.Context, in *EchoRequest) (<-chan *EchoResponse, error)
 }
 
 // Serve starts the server and blocks until the context is canceled or the deadline is exceeded
@@ -58,8 +59,44 @@ func Serve(srv queuerpc.IServer, handler EchoServiceServer) error {
 				Error:    queuerpc.ErrUnsupportedMethod,
 			}
 		},
-		ClientStreamHandler: nil,
-		ServerStreamHandler: nil,
+		ServerStreamHandler: func(ctx context.Context, msg *queuerpc.Message) (<-chan *queuerpc.Message, error) {
+			meta := msg.Metadata
+			ch := make(chan *queuerpc.Message)
+			switch msg.Method {
+			default:
+				return nil, queuerpc.ErrUnsupportedMethod
+			case "EchoServerStream":
+				var in EchoRequest
+				if err := proto.Unmarshal(msg.Body, &in); err != nil {
+					return nil, queuerpc.ErrUnmarshal
+				}
+				out, err := handler.EchoServerStream(queuerpc.NewContextWithMetadata(ctx, meta), &in)
+				if err != nil {
+					return nil, err
+				}
+				go func() {
+					defer close(ch)
+					for {
+						select {
+						case <-ctx.Done():
+							return
+						case out, ok := <-out:
+							if !ok {
+								return
+							}
+							body, _ := proto.Marshal(out)
+							ch <- &queuerpc.Message{
+								Id:       msg.Id,
+								Method:   msg.Method,
+								Metadata: meta,
+								Body:     body,
+							}
+						}
+					}
+				}()
+				return ch, nil
+			}
+		},
 	})
 }
 
@@ -82,6 +119,25 @@ func (c *EchoServiceClient) Echo(ctx context.Context, in *EchoRequest) (*EchoRes
 		return nil, err
 	}
 	msg, err := c.client.Request(ctx, &queuerpc.Message{Method: "Echo", Body: body, Metadata: meta})
+	if err != nil {
+		return nil, err
+	}
+	if msg.Error != nil {
+		return nil, msg.Error
+	}
+	if err := proto.Unmarshal(msg.Body, &out); err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+func (c *EchoServiceClient) EchoServerStream(ctx context.Context, in *EchoRequest) (*EchoResponse, error) {
+	meta := queuerpc.MetadataFromContext(ctx)
+	var out EchoResponse
+	body, err := proto.Marshal(in)
+	if err != nil {
+		return nil, err
+	}
+	msg, err := c.client.Request(ctx, &queuerpc.Message{Method: "EchoServerStream", Body: body, Metadata: meta})
 	if err != nil {
 		return nil, err
 	}

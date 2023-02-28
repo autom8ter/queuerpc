@@ -145,37 +145,6 @@ func (c *Client) Request(ctx context.Context, body *queuerpc.Message, opts ...qu
 	}
 }
 
-func (c *Client) ClientStream(ctx context.Context, requestChan chan *queuerpc.Message) error {
-	var err error
-	for {
-		select {
-		case <-ctx.Done():
-			return ctx.Err()
-		case body, ok := <-requestChan:
-			if !ok {
-				return nil
-			}
-			id := uuid.NewString()
-			body.Id = id
-			body, err = c.onRequest(ctx, body)
-			if err != nil {
-				return err
-			}
-			bits, err := proto.Marshal(body)
-			if err != nil {
-				return err
-			}
-			pubMsg := amqp091.Publishing{
-				Body: bits,
-			}
-			if err := c.session.Publish(ctx, pubMsg, c.outbox); err != nil {
-				return err
-			}
-		}
-	}
-	return nil
-}
-
 func (c *Client) ServerStream(ctx context.Context, body *queuerpc.Message, fn func(*queuerpc.Message)) error {
 	ch := make(chan *queuerpc.Message, 1)
 	c.mu.Lock()

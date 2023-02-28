@@ -10,8 +10,6 @@ import (
 type IClient interface {
 	// Request sends a request to the server and returns the response
 	Request(ctx context.Context, request *Message, opts ...RequestOption) (*Message, error)
-	// ClientStream sends a stream of requests to the server until the channel is closed or the context is canceled
-	ClientStream(ctx context.Context, request chan *Message) error
 	// ServerStream sends a request to the server and streams the response until the context is canceled
 	ServerStream(ctx context.Context, request *Message, fn func(*Message)) error
 	// Close closes the client and waits for all pending requests to complete
@@ -29,16 +27,12 @@ type IServer interface {
 // UnaryHandlerFunc is a function that handles a unary requests
 type UnaryHandlerFunc func(ctx context.Context, msg *Message) *Message
 
-// ClientStreamHandlerFunc is a function that handles a client stream request
-type ClientStreamHandlerFunc func(ctx context.Context, msg *Message) error
-
 // ServerStreamHandlerFunc is a function that handles a server stream request
-type ServerStreamHandlerFunc func(ctx context.Context, msg *Message) (chan *Message, error)
+type ServerStreamHandlerFunc func(ctx context.Context, msg *Message) (<-chan *Message, error)
 
 // Handlers is a struct that contains the various handler functions
 type Handlers struct {
 	UnaryHandler        UnaryHandlerFunc
-	ClientStreamHandler ClientStreamHandlerFunc
 	ServerStreamHandler ServerStreamHandlerFunc
 }
 

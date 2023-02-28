@@ -87,23 +87,19 @@ func (s *Server) Serve(handler queuerpc.Handlers) error {
 				s.errorHandler("", ErrEmptyMessageReceived)
 				return
 			}
+			var (
+				msg = &queuerpc.Message{}
+			)
+			if err := proto.Unmarshal(delivery.Body, msg); err != nil {
+				s.errorHandler(err.Error(), queuerpc.ErrUnmarshal)
+				return
+			}
+
 			s.machine.Go(ctx, func(ctx context.Context) error {
-				var (
-					msg = &queuerpc.Message{}
-				)
-				if err := proto.Unmarshal(delivery.Body, msg); err != nil {
-					s.errorHandler(err.Error(), queuerpc.ErrUnmarshal)
-					return nil
-				}
 				switch msg.Type {
 				case queuerpc.Type_UNARY:
 					if err := s.handleUnary(ctx, msg, handler); err != nil {
 						s.errorHandler("error handling unary request", err)
-						return nil
-					}
-				case queuerpc.Type_CLIENT_STREAM:
-					if err := s.handleClientStream(ctx, msg, handler); err != nil {
-						s.errorHandler("error handling client stream request", err)
 						return nil
 					}
 				case queuerpc.Type_SERVER_STREAM:
@@ -117,25 +113,6 @@ func (s *Server) Serve(handler queuerpc.Handlers) error {
 		})
 	})
 	return s.machine.Wait()
-}
-
-func (s *Server) handleClientStream(ctx context.Context, msg *queuerpc.Message, handlers queuerpc.Handlers) error {
-	if handlers.ClientStreamHandler == nil {
-		return fmt.Errorf("no client stream handler")
-	}
-	var err error
-	if s.onRequest != nil {
-		msg, err = s.onRequest(ctx, msg)
-		if err != nil {
-			s.errorHandler("error executing onRequest", err)
-			return nil
-		}
-	}
-	if err := handlers.ClientStreamHandler(ctx, msg); err != nil {
-		s.errorHandler("error executing client stream handler", err)
-		return nil
-	}
-	return nil
 }
 
 func (s *Server) handleServerStream(ctx context.Context, msg *queuerpc.Message, handlers queuerpc.Handlers) error {

@@ -22,8 +22,11 @@ func TestServer(t *testing.T) {
 			return
 		}
 	}()
-	err = srv.Serve(func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
-		return msg
+	err = srv.Serve(queuerpc.Handlers{
+		UnaryHandler: func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {
+			return msg
+		},
+		ServerStreamHandler: nil,
 	})
 	if err != nil && err != context.Canceled && err != context.DeadlineExceeded {
 		t.Fatal(err)
