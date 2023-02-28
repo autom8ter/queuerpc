@@ -57,7 +57,10 @@ func Serve(srv queuerpc.IServer, handler EchoServiceServer) error {
 				Metadata: meta,
 				Error:    queuerpc.ErrUnsupportedMethod,
 			}
-		}})
+		},
+		ClientStreamHandler: nil,
+		ServerStreamHandler: nil,
+	})
 }
 
 // EchoServiceClient is a type safe RabbitMQ rpc client

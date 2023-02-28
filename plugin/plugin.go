@@ -12,18 +12,7 @@ var imports = []string{
 	"github.com/golang/protobuf/proto",
 }
 
-func generateServer(genFile *protogen.GeneratedFile, s *protogen.Service) {
-	var serverName = s.GoName + "Server"
-	//var clientName = s.GoName + "Client"
-	genFile.P("// ", serverName, " is a type safe RabbitMQ rpc server")
-	genFile.P("type ", serverName, " interface {")
-	for _, m := range s.Methods {
-		genFile.P(m.Comments.Leading.String(), m.GoName, "(ctx context.Context, in *", m.Input.GoIdent, ") (*", m.Output.GoIdent, ", error)")
-	}
-	genFile.P("}")
-	genFile.P("// Serve starts the server and blocks until the context is canceled or the deadline is exceeded")
-	genFile.P(`func Serve(srv queuerpc.IServer, handler `, serverName, `) error {`)
-	genFile.P(`return srv.Serve(queuerpc.Handlers{`)
+func generateUnaryServerHandler(genFile *protogen.GeneratedFile, s *protogen.Service) {
 	genFile.P(`UnaryHandler:        func(ctx context.Context, msg *queuerpc.Message) *queuerpc.Message {`)
 	genFile.P(`meta := msg.Metadata`)
 	genFile.P(`switch msg.Method {`)
@@ -70,7 +59,25 @@ func generateServer(genFile *protogen.GeneratedFile, s *protogen.Service) {
 	genFile.P(`Metadata: meta,`)
 	genFile.P(`Error:    queuerpc.ErrUnsupportedMethod,`)
 	genFile.P(`}`)
-	genFile.P(`}})`)
+	genFile.P(`},`)
+}
+
+func generateServer(genFile *protogen.GeneratedFile, s *protogen.Service) {
+	var serverName = s.GoName + "Server"
+	//var clientName = s.GoName + "Client"
+	genFile.P("// ", serverName, " is a type safe RabbitMQ rpc server")
+	genFile.P("type ", serverName, " interface {")
+	for _, m := range s.Methods {
+		genFile.P(m.Comments.Leading.String(), m.GoName, "(ctx context.Context, in *", m.Input.GoIdent, ") (*", m.Output.GoIdent, ", error)")
+	}
+	genFile.P("}")
+	genFile.P("// Serve starts the server and blocks until the context is canceled or the deadline is exceeded")
+	genFile.P(`func Serve(srv queuerpc.IServer, handler `, serverName, `) error {`)
+	genFile.P(`return srv.Serve(queuerpc.Handlers{`)
+	generateUnaryServerHandler(genFile, s)
+	genFile.P(`ClientStreamHandler: nil,`)
+	genFile.P(`ServerStreamHandler: nil,`)
+	genFile.P(`})`)
 	genFile.P(`}`)
 }
 
