@@ -3,7 +3,6 @@ syntax = "proto3";
 package echo.v1;
 option go_package = "github.com/autom8ter/example/echo/v1";
 
-
 message EchoRequest {
   string message = 1;
 }
@@ -15,4 +14,6 @@ message EchoResponse {
 service EchoService {
   // Echo returns the same message it receives.
   rpc Echo(EchoRequest) returns (EchoResponse) {}
+  // EchoServerStream streams the same message it initially receives.
+  rpc EchoServerStream(EchoRequest) returns (stream EchoResponse) {}
 }

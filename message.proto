@@ -3,20 +3,29 @@ syntax = "proto3";
 package queuerpc;
 option go_package = "github.com/autom8ter/queuerpc";
 
+enum Type {
+  UNARY = 0;
+  SERVER_STREAM = 1;
+}
+
 // Message is an rpc message sent over a message-queue it is used as a client side request and server side response
 message Message {
   // id is the message id
   string id = 1;
+  // type is the message type
+  Type type = 2;
   // method is the method to call
-  string method = 2;
+  string method = 3;
+  // reply_to is the reply queue to send the response to
+  string reply_to = 4;
   // body is the message body
-  bytes body = 3;
+  bytes body = 5;
   // metadata is a map of key value pairs
-  map<string, string> metadata = 4;
+  map<string, string> metadata = 6;
   // Error is set if the message failed to be processed
-  Error error = 5;
+  Error error = 7;
   // unix timestamp in milliseconds
-  int64 timestamp = 6;
+  int64 timestamp = 8;
 }
 
 // Error is an rpc error

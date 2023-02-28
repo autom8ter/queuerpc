@@ -9,7 +9,9 @@ import (
 // IClient is the interface for an rpc client
 type IClient interface {
 	// Request sends a request to the server and returns the response
-	Request(ctx context.Context, body *Message, opts ...RequestOption) (*Message, error)
+	Request(ctx context.Context, request *Message, opts ...RequestOption) (*Message, error)
+	// ServerStream sends a request to the server and streams the response until the context is canceled
+	ServerStream(ctx context.Context, request *Message, fn func(*Message)) error
 	// Close closes the client and waits for all pending requests to complete
 	Close() error
 }
@@ -17,15 +19,22 @@ type IClient interface {
 // IServer is the interface for an rpc server
 type IServer interface {
 	// Serve starts the server and blocks until the context is canceled or the deadline is exceeded
-	Serve(handler HandlerFunc) error
+	Serve(handler Handlers) error
 	// Close closes the server and waits for all pending requests to complete
 	Close() error
 }
 
-// HandlerFunc is a function that handles a message.
-// The message returned will be sent back to the client
-// If an error is encountered, an error should be added to the Message
-type HandlerFunc func(ctx context.Context, msg *Message) *Message
+// UnaryHandlerFunc is a function that handles a unary requests
+type UnaryHandlerFunc func(ctx context.Context, msg *Message) *Message
+
+// ServerStreamHandlerFunc is a function that handles a server stream request
+type ServerStreamHandlerFunc func(ctx context.Context, msg *Message) (<-chan *Message, error)
+
+// Handlers is a struct that contains the various handler functions
+type Handlers struct {
+	UnaryHandler        UnaryHandlerFunc
+	ServerStreamHandler ServerStreamHandlerFunc
+}
 
 var (
 	// ErrUnsupportedMethod is returned when the method is not supported
