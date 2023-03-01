@@ -54,7 +54,7 @@ func NewClient(url string, service string, opts ...ClientOption) (*Client, error
 		onRequest:    o.onRequest,
 		onResponse:   o.onResponse,
 	}
-	if err := c.session.Connect(inbox); err != nil {
+	if err := c.session.Connect(inbox, true); err != nil {
 		return nil, err
 	}
 	c.connect()
@@ -67,7 +67,7 @@ func (c *Client) connect() {
 	c.session.machine.Go(c.session.ctx, func(ctx context.Context) error {
 		return c.session.Consume(func(delivery amqp091.Delivery) {
 			if delivery.Body == nil {
-				c.errorHandler("", ErrEmptyMessageReceived)
+				c.errorHandler("", queuerpc.ErrEmptyMessageReceived)
 				return
 			}
 			var m queuerpc.Message
@@ -180,7 +180,10 @@ func (c *Client) ServerStream(ctx context.Context, body *queuerpc.Message, fn fu
 		select {
 		case <-ctx.Done():
 			return ctx.Err()
-		case msg := <-ch:
+		case msg, ok := <-ch:
+			if !ok {
+				return nil
+			}
 			if c.onResponse != nil {
 				msg, err = c.onResponse(ctx, msg)
 				if err != nil {

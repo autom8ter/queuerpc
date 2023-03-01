@@ -42,6 +42,10 @@ var (
 	ErrUnmarshal         = &Error{Code: 2, Message: "failed to unmarshal request"}
 	ErrMarshal           = &Error{Code: 3, Message: "failed to marshal response"}
 	ErrUnknown           = &Error{Code: 4, Message: "unknown error"}
+	// ErrEmptyMessageReceived is returned when the message is empty
+	ErrEmptyMessageReceived = &Error{Code: 9001, Message: "empty message received"}
+	// ErrPublishMessage is returned when the message cannot be published
+	ErrPublishMessage = &Error{Code: 9005, Message: "failed to publish message"}
 )
 
 type ctxKey struct{}

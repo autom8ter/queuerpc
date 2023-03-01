@@ -6,6 +6,7 @@ import (
 
 	"github.com/autom8ter/queuerpc"
 	v1 "github.com/autom8ter/queuerpc/example/gen/proto/go"
+	"github.com/autom8ter/queuerpc/nats"
 	"github.com/autom8ter/queuerpc/rabbitmq"
 )
 
@@ -26,21 +27,44 @@ func (s *server) EchoServerStream(ctx context.Context, req *v1.EchoRequest) (<-c
 	return ch, nil
 }
 
+var (
+	provider = "nats"
+)
+
 func main() {
-	srv, err := rabbitmq.NewServer("amqp://guest:guest@localhost:5672/", "echo",
-		rabbitmq.WithServerOnRequest(func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error) {
-			fmt.Println("received request", msg.String())
-			return msg, nil
-		}),
-		rabbitmq.WithServerOnResponse(func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error) {
-			fmt.Println("sending response", msg.String())
-			return msg, nil
-		}),
-	)
-	if err != nil {
-		panic(err)
-	}
-	if err := v1.Serve(srv, &server{}); err != nil {
-		panic(err)
+	if provider == "rabbitmq" {
+		srv, err := rabbitmq.NewServer("amqp://guest:guest@localhost:5672/", "echo",
+			rabbitmq.WithServerOnRequest(func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error) {
+				fmt.Println("received request", msg.String())
+				return msg, nil
+			}),
+			rabbitmq.WithServerOnResponse(func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error) {
+				fmt.Println("sending response", msg.String())
+				return msg, nil
+			}),
+		)
+		if err != nil {
+			panic(err)
+		}
+		if err := v1.Serve(srv, &server{}); err != nil {
+			panic(err)
+		}
+	} else {
+		srv, err := nats.NewServer("", "echo",
+			nats.WithServerOnRequest(func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error) {
+				fmt.Println("received request", msg.String())
+				return msg, nil
+			}),
+			nats.WithServerOnResponse(func(ctx context.Context, msg *queuerpc.Message) (*queuerpc.Message, error) {
+				fmt.Println("sending response", msg.String())
+				return msg, nil
+			}),
+		)
+		if err != nil {
+			panic(err)
+		}
+		if err := v1.Serve(srv, &server{}); err != nil {
+			panic(err)
+		}
 	}
 }

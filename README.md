@@ -197,12 +197,12 @@ example code generated using [Makefile](Makefile)
 ## Limitations
 - only supports proto3
 - only supports unary and server streaming rpcs
-- only supports rabbitmq as a transport (for now)
+- only supports rabbitmq and nats as a transport (for now)
 - only supports generating clients and servers for go (for now)
 
 ## TODO
 - [ ] kafka message queue provider
-- [ ] nats message queue provider
+- [x] nats message queue provider
 - [ ] google pubsub message queue provider
 - [ ] aws sqs message queue provider
 - [ ] redis message queue provider

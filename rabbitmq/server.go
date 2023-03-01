@@ -76,7 +76,7 @@ func NewServer(url string, service string, opts ...ServerOption) (*Server, error
 		onRequest:    o.onRequest,
 		onResponse:   o.onResponse,
 	}
-	return s, s.session.Connect(inbox)
+	return s, s.session.Connect(inbox, false)
 }
 
 // Serve starts the server. This is a blocking call. It will return an error when the context is canceled.
@@ -84,7 +84,7 @@ func (s *Server) Serve(handler queuerpc.Handlers) error {
 	s.machine.Go(s.session.ctx, func(ctx context.Context) error {
 		return s.session.Consume(func(delivery amqp091.Delivery) {
 			if delivery.Body == nil {
-				s.errorHandler("", ErrEmptyMessageReceived)
+				s.errorHandler("", queuerpc.ErrEmptyMessageReceived)
 				return
 			}
 			var (
@@ -159,7 +159,7 @@ func (s *Server) handleServerStream(ctx context.Context, msg *queuerpc.Message, 
 			if err := s.session.Publish(ctx, amqp091.Publishing{
 				Body: bits,
 			}, msg.ReplyTo); err != nil {
-				s.errorHandler(err.Error(), ErrPublishMessage)
+				s.errorHandler(err.Error(), queuerpc.ErrPublishMessage)
 			}
 		}
 	}
@@ -198,7 +198,7 @@ func (s *Server) handleUnary(ctx context.Context, msg *queuerpc.Message, handler
 		CorrelationId: msg.Id,
 		Body:          bits,
 	}, msg.ReplyTo); err != nil {
-		s.errorHandler(err.Error(), ErrPublishMessage)
+		s.errorHandler(err.Error(), queuerpc.ErrPublishMessage)
 	}
 	return nil
 }
